@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouBike 即時地圖與 GitHub Pages 部署指南</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <!-- Leaflet MarkerCluster CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/MarkerCluster.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/MarkerCluster.Default.css"/>
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .custom-popup .leaflet-popup-content-wrapper {
+            border-radius: 1rem;
+            padding: 0;
+            overflow: hidden;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+        .custom-popup .leaflet-popup-content {
+            margin: 0;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body class="h-full flex flex-col bg-slate-50 text-slate-800">
+
+    <header class="bg-emerald-600 text-white shadow-md z-20 flex-shrink-0">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="bg-white text-emerald-600 p-2.5 rounded-xl shadow-inner font-bold text-xl flex items-center justify-center">
+                    <i class="fa-solid fa-bicycle"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight">YouBike 即時地圖</h1>
+                    <p class="text-xs text-emerald-100">台北市 YouBike 2.0 即時站點資訊與部署導覽</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-3">
+                <button id="refresh-btn" class="bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center space-x-2 shadow-sm">
+                    <i class="fa-solid fa-rotate-right"></i>
+                    <span>重新整理資料</span>
+                </button>
+                <button id="deploy-modal-btn" class="bg-white text-emerald-700 hover:bg-emerald-50 px-4 py-2 rounded-lg text-sm font-medium transition flex items-center space-x-2 shadow-sm">
+                    <i class="fa-brands fa-github"></i>
+                    <span>GitHub Pages 部署教學</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        
+        <!-- Sidebar Controls & Station List -->
+        <aside class="w-full md:w-96 bg-white border-r border-slate-200 flex flex-col z-10 shadow-lg md:shadow-none flex-shrink-0">
+            <!-- Search & Filters -->
+            <div class="p-4 border-b border-slate-100 bg-slate-50/50 space-y-3">
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                    </span>
+                    <input type="text" id="search-input" placeholder="搜尋站點名稱、地址..." class="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition shadow-sm">
+                </div>
+
+                <div class="flex items-center justify-between text-xs text-slate-500 px-1">
+                    <span id="station-count">載入站點中...</span>
+                    <span id="update-time" class="italic"></span>
+                </div>
+            </div>
+
+            <!-- Station List Scroll Area -->
+            <div id="station-list" class="flex-1 overflow-y-auto divide-y divide-slate-100 p-2 space-y-2">
+                <!-- Station item template target -->
+                <div class="p-8 text-center text-slate-400">
+                    <i class="fa-solid fa-spinner fa-spin text-2xl mb-2"></i>
+                    <p class="text-sm">正在取得 YouBike 開放資料...</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Map Container -->
+        <div class="flex-1 relative h-full">
+            <div id="map" class="w-full h-full z-0"></div>
+
+            <!-- Floating Legend / Info Badge -->
+            <div class="absolute bottom-6 right-6 bg-white/90 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-slate-200/80 z-[400] max-w-xs text-xs space-y-2">
+                <div class="font-bold text-slate-700 text-sm mb-1 flex items-center justify-between">
+                    <span>圖例說明</span>
+                    <i class="fa-solid fa-circle-info text-emerald-600"></i>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <span class="w-3.5 h-3.5 rounded-full bg-emerald-500 inline-block shadow-sm"></span>
+                    <span class="text-slate-600">可借車輛充足 (&gt; 5)</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <span class="w-3.5 h-3.5 rounded-full bg-amber-500 inline-block shadow-sm"></span>
+                    <span class="text-slate-600">車輛較少 (1 - 5)</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <span class="w-3.5 h-3.5 rounded-full bg-rose-500 inline-block shadow-sm"></span>
+                    <span class="text-slate-600">無車可借 (0)</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="deploy-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in duration-200">
+            <div class="p-5 bg-emerald-600 text-white flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <i class="fa-brands fa-github text-2xl"></i>
+                    <h3 class="font-bold text-lg">GitHub Pages 部署指南</h3>
+                </div>
+                <button id="close-modal-btn" class="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-emerald-700 transition">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 overflow-y-auto space-y-6 text-sm text-slate-600">
+                <div class="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-emerald-800">
+                    <p class="font-medium">本網頁為單一檔案架構（Single-File App），非常適合直接部署至 GitHub Pages！請依循下列步驟操作：</p>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="flex space-x-3">
+                        <div class="w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold flex-shrink-0">1</div>
+                        <div>
+                            <h4 class="font-bold text-slate-800 mb-1">建立 GitHub Repository</h4>
+                            <p>在 GitHub 建立一個新的公開儲存庫（Repository），例如命名為 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-emerald-600 font-mono">youbike-map</code>。</p>
+                        </div>
+                    </div>
+
+                    <div class="flex space-x-3">
+                        <div class="w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold flex-shrink-0">2</div>
+                        <div>
+                            <h4 class="font-bold text-slate-800 mb-1">儲存檔案並命名為 index.html</h4>
+                            <p>將此網頁完整程式碼儲存為 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-emerald-600 font-mono">index.html</code>，並上傳至你的 GitHub Repository 根目錄下。</p>
+                        </div>
+                    </div>
+
+                    <div class="flex space-x-3">
+                        <div class="w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold flex-shrink-0">3</div>
+                        <div>
+                            <h4 class="font-bold text-slate-800 mb-1">啟用 GitHub Pages</h4>
+                            <ul class="list-disc list-inside space-y-1 mt-1 text-slate-600">
+                                <li>進入你的 Repository 設定頁面（<span class="font-semibold">Settings</span>）。</li>
+                                <li>點擊左側導覽選單中的 <span class="font-semibold">Pages</span>。</li>
+                                <li>在 <span class="font-semibold">Build and deployment</span> 區塊的 <span class="font-semibold">Branch</span> 設定中，選擇 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-mono">main</code>（或 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-mono">master</code>）與 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-mono">/ (root)</code>。</li>
+                                <li>點擊 <span class="font-semibold">Save</span> 儲存。</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="flex space-x-3">
+                        <div class="w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold flex-shrink-0">4</div>
+                        <div>
+                            <h4 class="font-bold text-slate-800 mb-1">完成與預覽</h4>
+                            <p>等待數十秒後重新整理設定頁面，上方即會出現你的專屬線上網址（例如 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-emerald-600 font-mono">https://your-username.github.io/youbike-map/</code>），點擊即可在任何裝置上瀏覽即時 YouBike 地圖！</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+                <button id="close-modal-btn-2" class="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2 rounded-xl text-sm font-medium transition shadow-sm">
+                    了解，關閉視窗
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+
+    <script>
+        // 台北市 YouBike 2.0 即時資料開放 API
+        const YOUBIKE_API_URL = 'https://tcgbusfs.blob.core.windows.net/dotapp/youbike/v2/youbike_immediate.json';
+
+        // 初始化全域變數
+        let map;
+        let markersCluster;
+        let allStations = [];
+        let stationMarkersMap = new Map(); // 用於站點 ID 與 Marker 的對應
+
+        // DOM 元素快取
+        const searchInput = document.getElementById('search-input');
+        const stationListEl = document.getElementById('station-list');
+        const stationCountEl = document.getElementById('station-count');
+        const updateTimeEl = document.getElementById('update-time');
+        const refreshBtn = document.getElementById('refresh-btn');
+        const deployModal = document.getElementById('deploy-modal');
+        const deployModalBtn = document.getElementById('deploy-modal-btn');
+        const closeModalBtn = document.getElementById('close-modal-btn');
+        const closeModalBtn2 = document.getElementById('close-modal-btn-2');
+
+        // 初始化地圖
+        function initMap() {
+            // 設定合理的初始中心點 (台北車站附近) 與縮放層級
+            map = L.map('map', {
+                zoomControl: false
+            }).setView([25.0478, 121.5170], 15);
+
+            // 將縮放控制項移至右上角
+            L.control.zoom({
+                position: 'topright'
+            }).addTo(map);
+
+            // 加入 CartoDB Positron 高質感輕量地圖圖磚
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                subdomains: 'abcd'
+            }).addTo(map);
+
+            // 初始化 Marker Cluster 群集圖層
+            markersCluster = L.markerClusterGroup({
+                maxClusterRadius: 50,
+                spiderfyOnMaxZoom: true,
+                showCoverageOnHover: false,
+                zoomToBoundsOnClick: true
+            });
+            map.addLayer(markersCluster);
+        }
+
+        // 取得自訂 Marker 圖示
+        function getMarkerIcon(sbi) {
+            let bgColor = '#10b981'; // 綠色 (> 5)
+            if (sbi === 0) {
+                bgColor = '#f43f5e'; // 紅色 (0)
+            } else if (sbi <= 5) {
+                bgColor = '#f59e0b'; // 黃橘色 (1-5)
+            }
+
+            return L.divIcon({
+                className: 'custom-map-marker',
+                html: `<div style="background-color: ${bgColor}; width: 28px; height: 28px; border-radius: 50%; border: 2.5px solid white; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 11px;">${sbi}</div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14],
+                popupAnchor: [0, -14]
+            });
+        }
+
+        // 取得 YouBike 資料
+        async function fetchYouBikeData() {
+            stationListEl.innerHTML = `
+                <div class="p-8 text-center text-slate-400">
+                    <i class="fa-solid fa-spinner fa-spin text-2xl mb-2 text-emerald-600"></i>
+                    <p class="text-sm">正在載入即時站點資料...</p>
+                </div>
+            `;
+
+            try {
+                const response = await fetch(YOUBIKE_API_URL);
+                if (!response.ok) throw new Error('網路回應錯誤');
+                const data = await response.json();
+                
+                allStations = data;
+                updateTimeEl.textContent = `更新時間：${new Date().toLocaleTimeString()}`;
+                
+                renderStations(allStations);
+                updateMapMarkers(allStations);
+            } catch (error) {
+                console.error('取得 YouBike 資料失敗:', error);
+                stationListEl.innerHTML = `
+                    <div class="p-6 text-center text-rose-500">
+                        <i class="fa-solid fa-triangle-exclamation text-2xl mb-2"></i>
+                        <p class="text-sm font-medium">無法取得即時資料，請檢查網路連線或稍後再試。</p>
+                        <button onclick="fetchYouBikeData()" class="mt-3 bg-slate-800 text-white px-4 py-1.5 rounded-lg text-xs font-medium hover:bg-slate-900 transition">重試</button>
+                    </div>
+                `;
+                stationCountEl.textContent = '載入失敗';
+            }
+        }
+
+        // 更新地圖上的 Marker
+        function updateMapMarkers(stations) {
+            markersCluster.clearLayers();
+            stationMarkersMap.clear();
+
+            const newMarkers = [];
+
+            stations.forEach(station => {
+                const lat = parseFloat(station.lat);
+                const lng = parseFloat(station.lng);
+
+                if (isNaN(lat) || isNaN(lng)) return;
+
+                const marker = L.marker([lat, lng], {
+                    icon: getMarkerIcon(station.sbi)
+                });
+
+                // 組合 Popup 內容
+                const popupContent = `
+                    <div class="p-4 min-w-[240px]">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">YouBike 2.0</span>
+                            <span class="text-xs text-slate-400">${station.sno}</span>
+                        </div>
+                        <h3 class="font-bold text-slate-800 text-base mb-1">${station.sna.replace('YouBike2.0_', '')}</h3>
+                        <p class="text-xs text-slate-500 mb-3 flex items-start space-x-1">
+                            <i class="fa-solid fa-location-dot mt-0.5 text-slate-400 flex-shrink-0"></i>
+                            <span>${station.ar}</span>
+                        </p>
+                        <div class="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center">
+                            <div>
+                                <span class="block text-xs text-slate-500">可借車輛</span>
+                                <span class="text-lg font-bold ${station.sbi > 0 ? 'text-emerald-600' : 'text-rose-500'}">${station.sbi}</span>
+                            </div>
+                            <div>
+                                <span class="block text-xs text-slate-500">可還空位</span>
+                                <span class="text-lg font-bold text-slate-700">${station.bemp}</span>
+                            </div>
+                        </div>
+                        <div class="mt-3 text-[10px] text-right text-slate-400">
+                            更新時間：${station.mday ? station.mday.substring(8, 10) + ':' + station.mday.substring(10, 12) + ':' + station.mday.substring(12, 14) : ''}
+                        </div>
+                    </div>
+                `;
+
+                marker.bindPopup(popupContent, {
+                    className: 'custom-popup'
+                });
+
+                stationMarkersMap.set(station.sno, { marker, station });
+                newMarkers.push(marker);
+            });
+
+            markersCluster.addLayers(newMarkers);
+            stationCountEl.textContent = `共 ${stations.length} 個站點`;
+        }
+
+        // 渲染左側站點列表
+        function renderStations(stations) {
+            if (stations.length === 0) {
+                stationListEl.innerHTML = `
+                    <div class="p-8 text-center text-slate-400">
+                        <i class="fa-solid fa-bicycle text-2xl mb-2 opacity-50"></i>
+                        <p class="text-sm">找不到符合條件的站點</p>
+                    </div>
+                `;
+                return;
+            }
+
+            stationListEl.innerHTML = '';
+            
+            // 為了效能，限制最多渲染前 100 筆（搜尋時不限）
+            const displayStations = stations.slice(0, 150);
+
+            displayStations.forEach(station => {
+                const itemEl = document.createElement('div');
+                itemEl.className = 'p-3 hover:bg-slate-50 rounded-xl cursor-pointer transition border border-transparent hover:border-slate-200 space-y-1.5 group';
+                
+                const sbiBadgeColor = station.sbi > 5 ? 'bg-emerald-100 text-emerald-800' : (station.sbi > 0 ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800');
+
+                itemEl.innerHTML = `
+                    <div class="flex items-start justify-between">
+                        <h4 class="font-semibold text-slate-800 text-sm group-hover:text-emerald-600 transition">${station.sna.replace('YouBike2.0_', '')}</h4>
+                        <span class="text-xs font-bold px-2 py-0.5 rounded-full ${sbiBadgeColor}">可借 ${station.sbi}</span>
+                    </div>
+                    <p class="text-xs text-slate-500 truncate">${station.ar}</p>
+                    <div class="flex items-center justify-between text-xs text-slate-400 pt-1">
+                        <span>可還空位: <strong class="text-slate-600">${station.bemp}</strong></span>
+                        <span class="text-emerald-600 font-medium group-hover:underline">在地圖上檢視 &rarr;</span>
+                    </div>
+                `;
+
+                // 點擊列表項目時，地圖飛至該點並開啟 Popup
+                itemEl.addEventListener('click', () => {
+                    const lat = parseFloat(station.lat);
+                    const lng = parseFloat(station.lng);
+                    if (!isNaN(lat) && !isNaN(lng)) {
+                        map.setView([lat, lng], 17, {
+                            animate: true,
+                            duration: 0.8
+                        });
+
+                        const target = stationMarkersMap.get(station.sno);
+                        if (target) {
+                            target.marker.openPopup();
+                        }
+                    }
+                });
+
+                stationListEl.appendChild(itemEl);
+            });
+        }
+
+        // 即時搜尋過濾
+        searchInput.addEventListener('input', (e) => {
+            const keyword = e.target.value.trim().toLowerCase();
+            if (!keyword) {
+                renderStations(allStations);
+                updateMapMarkers(allStations);
+                return;
+            }
+
+            const filtered = allStations.filter(station => {
+                const name = station.sna.toLowerCase();
+                const address = station.ar.toLowerCase();
+                return name.includes(keyword) || address.includes(keyword);
+            });
+
+            renderStations(filtered);
+            updateMapMarkers(filtered);
+        });
+
+        // 重新整理按鈕事件
+        refreshBtn.addEventListener('click', () => {
+            fetchYouBikeData();
+        });
+
+        // 彈跳視窗控制
+        deployModalBtn.addEventListener('click', () => {
+            deployModal.classList.remove('hidden');
+        });
+
+        closeModalBtn.addEventListener('click', () => {
+            deployModal.classList.add('hidden');
+        });
+
+        closeModalBtn2.addEventListener('click', () => {
+            deployModal.classList.add('hidden');
+        });
+
+        deployModal.addEventListener('click', (e) => {
+            if (e.target === deployModal) {
+                deployModal.classList.add('hidden');
+            }
+        });
+
+        // 頁面載入完成後初始化
+        window.onload = function() {
+            initMap();
+            fetchYouBikeData();
+        };
+    </script>
+</body>
+</html>
